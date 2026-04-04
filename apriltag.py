@@ -63,7 +63,7 @@ TAG_POSITIONS = {
 }
 
 
-def calibrate(picam2, board_size=(9, 6), square_size=0.025, min_frames=15, capture_interval=4.0):
+def calibrate(picam2, board_size=(8, 6), square_size=0.025, min_frames=15, capture_interval=4.0):
     """
     Calibrate camera from live Picamera2 feed with a printed chessboard.
 
