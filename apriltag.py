@@ -37,7 +37,7 @@ CAMERA_EXT_Y = -0.0910 #METERS RIGHT OF ROBOT CENTER
 CAMERA_EXT_Z = 0.2230 #METERS ABOVE ROBOT ORIGIN
 
 CAMERA_EXT_YAW = 180.0 #CAMERA FACES BACKWARD
-CAMERA_EXT_PITCH = -40.0 #CAMERA TILTED DOWNWARD
+CAMERA_EXT_PITCH = 0.0 #CAMERA TILTED DOWNWARD
 CAMERA_EXT_ROLL = 0.0
 
 display = False
@@ -505,9 +505,10 @@ class AprilTagDetector:
         robot_y = T_field_robot[1, 3]
 
         #robot forward axis in field = first column of rotation matrix
-        robot_forward = T_field_robot[:3, 0]
-        robot_theta = np.arctan2(robot_forward[1], robot_forward[0])
-        robot_theta = (robot_theta + np.pi) % (2 * np.pi) - np.pi
+        cam_forward = T_field_camera[:3, 2]
+        camera_heading = np.arctan2(cam_forward[1], cam_forward[0])
+        robot_theta = camera_heading + np.pi
+        robot_theta = np.arctan2(np.sin(robot_theta), np.cos(robot_theta))
 
         if debug:
             print(f"  [debug] T_field_tag:\n{T_field_tag}")
