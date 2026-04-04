@@ -170,10 +170,13 @@ def load_calibration():
 
 
 def undistort_frame(frame, cam_matrix, dist_coeff):
-    """Remove lens distortion from a frame."""
+    """Remove lens distortion from a frame and return the matching camera matrix."""
     h, w = frame.shape[:2]
-    new_matrix, roi = cv2.getOptimalNewCameraMatrix(cam_matrix, dist_coeff, (w, h), 1, (w, h))
-    return cv2.undistort(frame, cam_matrix, dist_coeff, None, new_matrix)
+    new_matrix, roi = cv2.getOptimalNewCameraMatrix(
+        cam_matrix, dist_coeff, (w, h), 1, (w, h)
+    )
+    undistorted = cv2.undistort(frame, cam_matrix, dist_coeff, None, new_matrix)
+    return undistorted, new_matrix
     
 def listen():
     """
@@ -592,12 +595,12 @@ class AprilTagDetector:
             self.ds_sender.send_keepalive(enabled=self.robot_enabled)
             self.last_keepalive_time = current_time
 
-    def detect_tags(self, image):
+    def detect_tags(self, image, camera_params):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return self.detector.detect(
             gray,
             estimate_tag_pose=True,
-            camera_params=[self.fx, self.fy, self.cx, self.cy],
+            camera_params=camera_params,
             tag_size=0.1  # Tag size in meters - adjust to your actual tag size
         )
 
@@ -688,11 +691,19 @@ class AprilTagDetector:
                 frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
                 if use_undistort:
-                    frame = undistort_frame(frame, cam_matrix, dist_coeff)
+                    frame, current_matrix = undistort_frame(frame, cam_matrix, dist_coeff)
+                    current_camera_params = [
+                        current_matrix[0, 0],
+                        current_matrix[1, 1],
+                        current_matrix[0, 2],
+                        current_matrix[1, 2],
+                    ]
+                else:
+                    current_camera_params = [self.fx, self.fy, self.cx, self.cy]
 
                 self.send_ds_keepalive()
 
-                tags = self.detect_tags(frame)
+                tags = self.detect_tags(frame, current_camera_params)
                 self.publish_detections(tags, capture_timestamp_us)
 
                 if tags:
