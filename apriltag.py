@@ -601,7 +601,7 @@ class AprilTagDetector:
             gray,
             estimate_tag_pose=True,
             camera_params=camera_params,
-            tag_size=0.1  # Tag size in meters - adjust to your actual tag size
+            tag_size=0.08  # Tag size in meters - adjust to your actual tag size
         )
 
     def draw_detection(self, image, tag):
