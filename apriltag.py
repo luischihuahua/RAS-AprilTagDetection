@@ -504,14 +504,19 @@ class AprilTagDetector:
         #robot pose in field frame
         T_field_robot = T_field_camera @ np.linalg.inv(T_robot_camera)
 
-        robot_x = T_field_robot[0, 3]
-        robot_y = T_field_robot[1, 3]
+        cam_x = T_field_camera[0, 3]
+        cam_y = T_field_camera[1, 3]
 
-        #robot forward axis in field = first column of rotation matrix
         cam_forward = T_field_camera[:3, 2]
         camera_heading = np.arctan2(cam_forward[1], cam_forward[0])
         robot_theta = camera_heading + np.pi
         robot_theta = np.arctan2(np.sin(robot_theta), np.cos(robot_theta))
+
+        cos_t = np.cos(robot_theta)
+        sin_t = np.sin(robot_theta)
+
+        robot_x = cam_x - (CAMERA_EXT_X * cos_t - CAMERA_EXT_Y * sin_t)
+        robot_y = cam_y - (CAMERA_EXT_X * sin_t + CAMERA_EXT_Y * cos_t)
 
         if debug:
             print(f"  [debug] T_field_tag:\n{T_field_tag}")
@@ -520,6 +525,7 @@ class AprilTagDetector:
             print(f"  [debug] T_field_camera:\n{T_field_camera}")
             print(f"  [debug] T_robot_camera:\n{T_robot_camera}")
             print(f"  [debug] T_field_robot:\n{T_field_robot}")
+            print(f"  [debug] camera pos: ({cam_x:.4f}, {cam_y:.4f})")
             print(f"  [debug] robot pos: ({robot_x:.4f}, {robot_y:.4f}, {robot_theta:.4f})")
 
         return robot_x, robot_y, robot_theta
