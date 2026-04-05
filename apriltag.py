@@ -401,6 +401,10 @@ class AprilTagDetector:
 
         # Capture timestamp in RIO FPGA time (microseconds), converted via NT4 clock sync
         self.tag_timestamp_entry = self.vision_table.getIntegerTopic("tag_timestamp_us").publish()
+        self.debug_local_time_entry = self.vision_table.getIntegerTopic("debug_local_time_us").publish()
+        self.debug_offset_entry = self.vision_table.getIntegerTopic("debug_offset_us").publish()
+        self.debug_capture_ts_entry = self.vision_table.getIntegerTopic("debug_capture_ts_us").publish()
+        self.debug_nt_connected_entry = self.vision_table.getBooleanTopic("debug_nt_connected").publish()
 
         # Field-relative robot pose (computed from AprilTag known positions + pose)
         self.robot_field_x_entry     = self.vision_table.getDoubleTopic("robot_field_x").publish()
@@ -415,16 +419,33 @@ class AprilTagDetector:
 
     def capture_rio_timestamp(self):
         """
-        Record a timestamp at frame capture and convert to RIO FPGA time
-        using NT4's built-in clock synchronization.
-
-        Returns RIO-relative timestamp in microseconds, or -1 if not synced yet.
+        Returns a timestamp in roboRIO FPGA time (microseconds),
+        or -1 if NT time sync is not ready yet.
         """
-        local_time_us = time.monotonic_ns() // 1000
+        nt_connected = self.nt_inst.isConnected()
+        self.debug_nt_connected_entry.set(nt_connected)
+
+        if not nt_connected:
+            self.debug_local_time_entry.set(-1)
+            self.debug_offset_entry.set(-1)
+            self.debug_capture_ts_entry.set(-1)
+            return -1
+
         offset = self.nt_inst.getServerTimeOffset()
         if offset is None:
+            self.debug_local_time_entry.set(-1)
+            self.debug_offset_entry.set(-1)
+            self.debug_capture_ts_entry.set(-1)
             return -1
-        return local_time_us + offset
+
+        local_time_us = time.time_ns() // 1000
+        capture_ts_us = int(local_time_us + offset)
+
+        self.debug_local_time_entry.set(local_time_us)
+        self.debug_offset_entry.set(int(offset))
+        self.debug_capture_ts_entry.set(capture_ts_us)
+
+        return capture_ts_us
 
     @staticmethod
     def correct_pose_tilt(pose_t):
