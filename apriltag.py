@@ -49,17 +49,17 @@ display = False
 TAG_POSITIONS = {
     # West wall (back wall, x≈0) — IDs 0-4 indicate bucket deposit zone
     # All at same position, tag faces +x into the field
-    0: (0.01, 0.565, 0.0),
-    1: (0.01, 0.565, 0.0),
-    2: (0.01, 0.565, 0.0),
-    3: (0.01, 0.565, 0.0),
-    4: (0.01, 0.565, 0.0),
+    0: (0.0090932, 0.5716016, 0.0),
+    1: (0.0090932, 0.5716016, 0.0),
+    2: (0.0090932, 0.5716016, 0.0),
+    3: (0.0090932, 0.5716016, 0.0),
+    4: (0.0090932, 0.5716016, 0.0),
     # North wall (left wall, y≈1.22) — tag faces -y into the field
-    5: (0.812, 1.139, -np.pi / 2),
+    5: (0.8120126, 1.1405108, -np.pi / 2),
     # South wall (right wall, y=0) — tag faces +y into the field
-    6: (1.1168, 0.01, np.pi / 2),
+    6: (1.116711, 0.0024892, np.pi / 2),
     # East wall (cave side, x≈2.44) — tag faces -x into the field
-    7: (2.36, 0.57, np.pi),
+    7: (2.3597108, 0.5716016, np.pi),
 }
 
 
