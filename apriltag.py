@@ -340,6 +340,21 @@ class AprilTagDetector:
 
         self.setup_networktables(roborio_ip)
 
+        # Time-sync state
+        self.sync_req_seq = 0
+        self.sync_last_send_time = 0.0
+        self.sync_send_period_s = 0.10   # 10 Hz sync requests
+
+        self.pending_sync_requests = {}  # seq -> t0_pi_us
+        self.last_sync_resp_seq = -1
+
+        self.sync_samples = []           # list of (rtt_us, offset_us)
+        self.max_sync_samples = 30
+
+        self.sync_offset_est_us = None
+        self.sync_last_rtt_us = -1
+        self.sync_good = False
+
         self.ds_sender = DSPacketSender(roborio_ip)
         self.robot_enabled = False
         self.last_keepalive_time = time.time()
@@ -362,6 +377,81 @@ class AprilTagDetector:
         self.picam2.start()
         time.sleep(2)  # Camera warm-up
 
+    def pi_now_us(self) -> int:
+        return time.monotonic_ns() // 1000
+    
+    def send_sync_request(self):
+        now_s = time.time()
+        if now_s - self.sync_last_send_time < self.sync_send_period_s:
+            return
+
+        self.sync_last_send_time = now_s
+
+        t0_pi_us = self.pi_now_us()
+        seq = self.sync_req_seq
+        self.sync_req_seq += 1
+
+        self.pending_sync_requests[seq] = t0_pi_us
+
+        # Keep dictionary from growing forever
+        if len(self.pending_sync_requests) > 100:
+            oldest = sorted(self.pending_sync_requests.keys())[:-50]
+            for k in oldest:
+                self.pending_sync_requests.pop(k, None)
+
+        self.pi_sync_req_seq_pub.set(seq)
+        self.pi_sync_req_pi_us_pub.set(t0_pi_us)
+
+    def process_sync_response(self):
+        resp_seq = self.rio_sync_resp_seq_sub.get()
+        if resp_seq < 0 or resp_seq == self.last_sync_resp_seq:
+            return
+
+        self.last_sync_resp_seq = resp_seq
+
+        echoed_t0_pi_us = self.rio_sync_resp_pi_us_echo_sub.get()
+        rio_us = self.rio_sync_resp_rio_us_sub.get()
+        t1_pi_us = self.pi_now_us()
+
+        if resp_seq not in self.pending_sync_requests:
+            return
+
+        original_t0_pi_us = self.pending_sync_requests.pop(resp_seq)
+
+        # Sanity check: echoed timestamp should match
+        if echoed_t0_pi_us != original_t0_pi_us:
+            return
+
+        rtt_us = t1_pi_us - original_t0_pi_us
+        if rtt_us <= 0 or rtt_us > 100000:   # reject RTT > 100 ms
+            return
+
+        offset_us = rio_us - ((original_t0_pi_us + t1_pi_us) / 2.0)
+
+        self.sync_last_rtt_us = rtt_us
+        self.sync_samples.append((rtt_us, offset_us))
+
+        if len(self.sync_samples) > self.max_sync_samples:
+            self.sync_samples.pop(0)
+
+        # Use the offsets from the lowest-RTT samples
+        best = sorted(self.sync_samples, key=lambda x: x[0])[:5]
+        best_offsets = [x[1] for x in best]
+
+        if best_offsets:
+            self.sync_offset_est_us = float(np.median(best_offsets))
+            self.sync_good = True
+
+        self.sync_est_offset_us_pub.set(
+            self.sync_offset_est_us if self.sync_offset_est_us is not None else -1.0
+        )
+        self.sync_last_rtt_us_pub.set(float(self.sync_last_rtt_us))
+        self.sync_good_pub.set(self.sync_good)
+        self.sync_sample_count_pub.set(len(self.sync_samples))
+
+    def update_time_sync(self):
+        self.send_sync_request()
+        self.process_sync_response()
 
     def setup_networktables(self, roborio_ip):
         self.nt_inst = NetworkTableInstance.getDefault()
@@ -415,37 +505,34 @@ class AprilTagDetector:
         self.heartbeat_counter = 0
         self.start_light_entry = self.vision_table.getBooleanTopic("start_light_detected").publish()
 
+        # Explicit Pi <-> RIO time sync topics
+        self.pi_sync_req_seq_pub = self.vision_table.getIntegerTopic("pi_sync_req_seq").publish()
+        self.pi_sync_req_pi_us_pub = self.vision_table.getIntegerTopic("pi_sync_req_pi_us").publish()
+
+        self.rio_sync_resp_seq_sub = self.vision_table.getIntegerTopic("rio_sync_resp_seq").subscribe(-1)
+        self.rio_sync_resp_pi_us_echo_sub = self.vision_table.getIntegerTopic("rio_sync_resp_pi_us_echo").subscribe(-1)
+        self.rio_sync_resp_rio_us_sub = self.vision_table.getIntegerTopic("rio_sync_resp_rio_us").subscribe(-1)
+
+        # Debug topics
+        self.sync_est_offset_us_pub = self.vision_table.getDoubleTopic("sync_est_offset_us").publish()
+        self.sync_last_rtt_us_pub = self.vision_table.getDoubleTopic("sync_last_rtt_us").publish()
+        self.sync_good_pub = self.vision_table.getBooleanTopic("sync_good").publish()
+        self.sync_sample_count_pub = self.vision_table.getIntegerTopic("sync_sample_count").publish()
+
         print(f"NetworkTables initialized, connecting to roboRIO at {roborio_ip}")
 
     def capture_rio_timestamp(self):
         """
-        Returns a timestamp in roboRIO FPGA time (microseconds),
-        or -1 if NT time sync is not ready yet.
+        Convert Pi monotonic capture time into roboRIO FPGA time using the
+        explicit Pi<->RIO sync estimate.
+        Returns -1 if sync is not ready yet.
         """
-        nt_connected = self.nt_inst.isConnected()
-        self.debug_nt_connected_entry.set(nt_connected)
-
-        if not nt_connected:
-            self.debug_local_time_entry.set(-1)
-            self.debug_offset_entry.set(-1)
-            self.debug_capture_ts_entry.set(-1)
+        if not self.sync_good or self.sync_offset_est_us is None:
             return -1
 
-        offset = self.nt_inst.getServerTimeOffset()
-        if offset is None:
-            self.debug_local_time_entry.set(-1)
-            self.debug_offset_entry.set(-1)
-            self.debug_capture_ts_entry.set(-1)
-            return -1
-
-        local_time_us = time.time_ns() // 1000
-        capture_ts_us = int(local_time_us + offset)
-
-        self.debug_local_time_entry.set(local_time_us)
-        self.debug_offset_entry.set(int(offset))
-        self.debug_capture_ts_entry.set(capture_ts_us)
-
-        return capture_ts_us
+        capture_pi_us = self.pi_now_us()
+        capture_rio_us = capture_pi_us + self.sync_offset_est_us
+        return int(capture_rio_us)
 
     @staticmethod
     def correct_pose_tilt(pose_t):
@@ -707,6 +794,8 @@ class AprilTagDetector:
 
             # ── Main detection loop ───────────────────────────────────────
             while True:
+                self.update_time_sync()
+
                 if self.task_done_sub.get():
                     print("RIO signaled task done - stopping DS keepalive")
                     self.ds_sender.disable_robot()
